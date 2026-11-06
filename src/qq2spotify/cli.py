@@ -10,14 +10,18 @@ import httpx
 import typer
 from rich.console import Console
 from rich.markup import escape
+from rich.progress import track as with_progress
 from rich.table import Table
 from rich.text import Text
 
 from qq2spotify import __version__
 from qq2spotify.config import ConfigError, Settings, data_dir, load_settings
 from qq2spotify.http import make_client
+from qq2spotify.matching.search import Matcher, load_aliases
+from qq2spotify.models import MatchResult, SourceTrack
 from qq2spotify.qq.links import LinkError, extract_playlist_id
-from qq2spotify.qq.playlist import QQError, fetch_raw, parse_playlist
+from qq2spotify.qq.playlist import QQError, fetch_playlist, fetch_raw, parse_playlist
+from qq2spotify.report import count_statuses, format_length, write_report
 from qq2spotify.spotify.auth import (
     LOGIN_WARNING_DAYS,
     AccountTokens,
@@ -67,11 +71,7 @@ def _settings() -> Settings:
         raise _fail(str(error)) from None
 
 
-def _length(duration_ms: int | None) -> str:
-    if duration_ms is None:
-        return ""
-    seconds = duration_ms // 1000
-    return f"{seconds // 60}:{seconds % 60:02d}"
+SEARCH_PAUSE = 0.1  # seconds between Spotify searches, to stay under rate limits
 
 
 @app.callback()
@@ -133,7 +133,7 @@ def inspect_playlist(
             Text(track.title),
             Text(" / ".join(track.artists)),
             Text(track.album or ""),
-            _length(track.duration_ms),
+            format_length(track.duration_ms),
         )
     console.print(table)
 
@@ -254,3 +254,92 @@ def logout(account: AccountOption = "default") -> None:
         )
     else:
         console.print(f"There's no saved login named {escape(account)}.")
+
+
+@app.command("match")
+def match_playlist(
+    link: Annotated[
+        str, typer.Argument(help="QQ Music playlist link, share text or playlist ID.")
+    ],
+    account: AccountOption = "default",
+    report: Annotated[
+        Path | None,
+        typer.Option(
+            help="Where to save the report. Default: report-<playlist ID>.csv"
+        ),
+    ] = None,
+    qq_cookie: Annotated[
+        Path | None,
+        typer.Option(
+            help="File holding your y.qq.com cookie, for login-only playlists."
+        ),
+    ] = None,
+) -> None:
+    """Find each QQ Music song on Spotify and save a report. Changes nothing on Spotify."""
+    store = _store(account)
+    settings = _settings()
+    cookie = qq_cookie.read_text(encoding="utf-8").strip() if qq_cookie else None
+    aliases = load_aliases(data_dir() / "aliases.json")
+    playlist_id, name, tracks = "", "", []
+    results: list[MatchResult] = []
+    stopped_by: str | None = None
+    try:
+        with make_client() as http:
+            playlist_id = extract_playlist_id(link, http)
+            name, tracks = fetch_playlist(playlist_id, http, cookie=cookie)
+            tokens = AccountTokens(store, account, settings.client_id, http)
+            matcher = Matcher(SpotifyClient(tokens, http), aliases, pause=SEARCH_PAUSE)
+            for song in with_progress(
+                tracks, description="Searching Spotify", console=console, transient=True
+            ):
+                results.append(matcher.match(song))
+    except (LinkError, QQError, NeedsLogin) as error:
+        raise _fail(str(error)) from None
+    except QuotaExceeded as error:
+        stopped_by = str(error)  # still save what was found so far
+    except httpx.HTTPStatusError as error:
+        if error.response.status_code == 403:
+            raise _fail(NOT_ALLOWED) from None
+        raise _fail(f"Spotify said no (HTTP {error.response.status_code}).") from None
+    except httpx.HTTPError as error:
+        raise _fail(f"Couldn't reach Spotify or QQ Music ({error}).") from None
+
+    report_path = report or Path(f"report-{playlist_id}.csv")
+    write_report(report_path, results)
+    counts = count_statuses(results)
+    console.print(Text(f"{name}: checked {len(results)} of {len(tracks)} songs."))
+    console.print(
+        f"Matched {counts['matched']} · Review {counts['review']} · "
+        f"Not found {counts['not_found']}"
+    )
+    _print_songs_to_check(results)
+    console.print(f"Report saved to {escape(str(report_path))}")
+    if stopped_by:
+        raise _fail(f"{stopped_by} The report has the songs checked so far.")
+
+
+def _describe(track: SourceTrack) -> Text:
+    return Text(f"{track.title} – {' / '.join(track.artists)}".rstrip(" –"))
+
+
+def _print_songs_to_check(results: list[MatchResult]) -> None:
+    to_check = [result for result in results if result.status != "matched"]
+    if not to_check:
+        return
+    table = Table(title=Text("Songs to check"))
+    table.add_column("#", justify="right")
+    table.add_column("QQ Music")
+    table.add_column("Best Spotify match")
+    table.add_column("Score", justify="right")
+    table.add_column("Result")
+    for result in to_check:
+        best = result.best
+        found = f"{best.title} – {' / '.join(best.artists)}" if best else ""
+        table.add_row(
+            str(result.source.position + 1),
+            _describe(result.source),
+            Text(found),
+            f"{result.score:.2f}",
+            result.status.replace("_", " "),
+        )
+    console.print(table)
