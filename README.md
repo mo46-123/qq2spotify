@@ -1,6 +1,6 @@
 # QQ Music to Spotify Playlist Transfer: Build Plan
 
-> **Status: in progress.** M1 to M4 are done: `qq2spotify inspect <link>` lists a QQ Music playlist's songs, `qq2spotify login` saves a Spotify login, and `qq2spotify match <link>` finds each song on Spotify and saves a report (108 of 109 found on a real playlist). Next is M5, creating the Spotify playlist. This README is the build plan; it will turn into the user guide as the code lands. Last updated 6 November 2026.
+> **Status: in progress.** M1 to M5 are done: `qq2spotify inspect <link>` lists a QQ Music playlist's songs, `qq2spotify login` saves a Spotify login, `qq2spotify match <link>` finds each song on Spotify and saves a report, and `qq2spotify transfer <link>` copies the matches into a private Spotify playlist in QQ order. On a real 109-song playlist it added 106 songs (108 matched, 2 were listed twice), and a second run added none. Next is M6, polish: progress, summary, cache, resume and exit codes. This README is the build plan; it will turn into the user guide as the code lands. Last updated 6 November 2026.
 
 ## Goal and how the tool works
 
@@ -908,7 +908,7 @@ Plan on about 8 working days for one developer (a rough estimate), in this order
 - [x] **M2 `inspect` (1 day):** link parsing, QQ fetch, fixtures and tests; prints the songs of a real playlist.
 - [x] **M3 `login` (1 day):** PKCE, token files, refresh and `GET /me`; both accounts signed in.
 - [x] **M4 Matching (2 days):** cleaning, search cascade, scoring and aliases, tuned on a real 109-song playlist; the `qq2spotify match` command writes the report (108 matched, 1 rightly held back).
-- [ ] **M5 `transfer` (1 day):** create or open the playlist, skip duplicates, add in chunks, retry on errors; the first real playlist copied.
+- [x] **M5 `transfer` (1 day):** create or open the playlist, skip duplicates, add in chunks, retry on errors; the first real playlist copied (106 songs, and a second run added none).
 - [ ] **M6 Polish (1 day):** progress bar, summary, cache, resume, exit codes and `--verbose`.
 - [ ] **M7 Tests (1 day):** fill in the testing table above, then do the manual end-to-end run.
 - [ ] **M8 Release (½ day):** user-facing README, LICENSE, CHANGELOG and the `v0.1.0` tag.
