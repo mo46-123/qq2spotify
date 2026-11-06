@@ -19,6 +19,7 @@ COLUMNS = (
     "artist_score",
     "length_score",
     "album_score",
+    "artist_by_search",
     "spotify_title",
     "spotify_artists",
     "spotify_album",
@@ -50,8 +51,9 @@ def report_row(result: MatchResult) -> list[object]:
     if parts:
         row += [f"{parts.title:.2f}", f"{parts.artist:.2f}"]
         row += [f"{parts.length:.2f}", f"{parts.album:.2f}"]
+        row += ["yes" if parts.artist_by_search else ""]
     else:
-        row += ["", "", "", ""]
+        row += ["", "", "", "", ""]
     if best:
         row += [best.title, " / ".join(best.artists), best.album]
         row += [format_length(best.duration_ms), best.url]

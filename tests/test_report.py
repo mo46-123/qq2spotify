@@ -39,6 +39,7 @@ def test_report_has_a_row_per_song_and_opens_in_excel(tmp_path: Path) -> None:
     assert rows[0]["status"] == "matched"
     assert rows[0]["score"] == "1.00"
     assert rows[0]["spotify_artists"] == "Jay Chou"
+    assert rows[0]["artist_by_search"] == ""
     assert rows[0]["spotify_url"] == "https://open.spotify.com/track/1"
     assert rows[1]["status"] == "not_found"
     assert rows[1]["spotify_title"] == ""

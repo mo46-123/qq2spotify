@@ -16,8 +16,14 @@ FEATURING_RE = re.compile(
     r"^\s*(?:feat\.?|ft\.?|featuring|with)\s+(.+)$", re.IGNORECASE
 )
 ARTIST_SPLIT_RE = re.compile(r"\s*(?:,|，|&|/|、|\band\b)\s*", re.IGNORECASE)
+# Chinese characters only, and any East Asian script (Chinese, Japanese, Korean).
 CJK_RE = re.compile(r"[㐀-鿿豈-﫿]+")
+EAST_ASIAN_RE = re.compile(r"[぀-ヿ㐀-鿿가-힯豈-﫿]")
+LATIN_RE = re.compile(r"[A-Za-z]")
+NAME_BRACKETS_RE = re.compile(r"[(（]([^)）]*)[)）]")
 PUNCTUATION_RE = re.compile(r"[\W_]+")
+# Concert albums, such as "2004無與倫比演唱會 (Live)".
+LIVE_ALBUM_RE = re.compile(r"(?<![a-z0-9])live(?![a-z0-9])|演唱会|现场")
 
 # Words that mark a different version of a song, and the tag they stand for.
 VERSION_WORDS = {
@@ -38,7 +44,9 @@ VERSION_WORDS = {
     "dj": "dj",
     "acoustic": "acoustic",
     "女版": "female",
+    "女声版": "female",
     "男版": "male",
+    "男声版": "male",
     "sped up": "sped up",
     "加速版": "sped up",
     "slowed": "slowed",
@@ -105,6 +113,13 @@ def split_title(title: str) -> TitleParts:
     return TitleParts(core=core, tags=frozenset(tags), featured=tuple(featured))
 
 
+@lru_cache(maxsize=16384)
+def album_tags(album: str | None) -> frozenset[str]:
+    """{"live"} for a concert album, otherwise nothing."""
+    lowered = to_simplified(_nfkc(album).lower())
+    return frozenset({"live"}) if LIVE_ALBUM_RE.search(lowered) else frozenset()
+
+
 def _halves(name: str) -> tuple[str, str]:
     """Split a name like "G.E.M.邓紫棋" into its Latin and Chinese halves."""
     chinese = "".join(CJK_RE.findall(name))
@@ -113,21 +128,45 @@ def _halves(name: str) -> tuple[str, str]:
 
 
 @lru_cache(maxsize=16384)
-def name_variants(name: str) -> frozenset[str]:
-    """Cleaned forms of an artist name, including both halves of mixed names."""
+def name_parts(name: str) -> tuple[str, ...]:
+    """The separate spellings inside one artist name.
+
+    "G.E.M.邓紫棋" gives ("G.E.M.", "邓紫棋"), "辉星 (휘성)" gives ("辉星", "휘성"),
+    and "周杰伦" gives ("周杰伦",).
+    """
     text = _nfkc(name)
-    variants = {clean(text)}
-    latin, chinese = _halves(text)
-    if chinese and re.search("[A-Za-z]", latin):
-        variants |= {clean(latin), clean(chinese)}
+    pieces = [NAME_BRACKETS_RE.sub(" ", text), *NAME_BRACKETS_RE.findall(text)]
+    parts: list[str] = []
+    for piece in pieces:
+        tidy = " ".join(piece.split())
+        if not tidy:
+            continue
+        latin, chinese = _halves(tidy)
+        if chinese and LATIN_RE.search(latin):
+            parts += [latin, chinese]
+        else:
+            parts.append(tidy)
+    return tuple(dict.fromkeys(parts))
+
+
+@lru_cache(maxsize=16384)
+def name_variants(name: str) -> frozenset[str]:
+    """Cleaned forms of an artist name: the whole name and each of its parts."""
+    variants = {clean(name), *(clean(part) for part in name_parts(name))}
     variants.discard("")
     return frozenset(variants)
 
 
 def search_names(name: str) -> list[str]:
-    """Names worth searching Spotify with: both halves of a mixed name, else the name."""
-    text = _nfkc(name)
-    latin, chinese = _halves(text)
-    if chinese and re.search("[A-Za-z]", latin):
-        return [latin, chinese]
-    return [text] if text else []
+    """Names worth searching Spotify with: each separate spelling in the name."""
+    return list(name_parts(name))
+
+
+def is_latin_name(name: str) -> bool:
+    """True for names written only in Latin letters, like "Sam Lee"."""
+    return bool(LATIN_RE.search(name)) and not EAST_ASIAN_RE.search(name)
+
+
+def is_east_asian_name(name: str) -> bool:
+    """True for names written only in Chinese, Japanese or Korean, like "李圣杰"."""
+    return bool(EAST_ASIAN_RE.search(name)) and not LATIN_RE.search(name)

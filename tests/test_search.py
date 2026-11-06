@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from qq2spotify.matching.search import Matcher, build_queries, load_aliases
+from qq2spotify.matching.search import Matcher, Query, build_queries, load_aliases
 from qq2spotify.models import SourceTrack
 
 
@@ -45,17 +45,22 @@ class FakeApi:
         return {"tracks": {"items": self.answers.get(params["q"], [])}}
 
 
+def texts(track: SourceTrack, aliases: dict) -> list[str]:
+    return [query.text for query in build_queries(track, aliases)]
+
+
 def test_queries_try_spotify_names_first() -> None:
-    assert build_queries(song("晴天 (Live)", ["周杰伦"]), {"周杰伦": ["Jay Chou"]}) == [
-        "track:晴天 artist:Jay Chou",
-        "track:晴天 artist:周杰伦",
-        "晴天 Jay Chou",
-        "track:晴天",
+    queries = build_queries(song("晴天 (Live)", ["周杰伦"]), {"周杰伦": ["Jay Chou"]})
+    assert queries == [
+        Query("track:晴天 artist:Jay Chou"),  # an alias: no artist hint for scoring
+        Query("track:晴天 artist:周杰伦", artist="周杰伦"),  # QQ's own spelling
+        Query("晴天 Jay Chou"),
+        Query("track:晴天"),
     ]
 
 
 def test_queries_add_traditional_chinese() -> None:
-    assert build_queries(song("后来的我们", ["五月天"]), {"五月天": ["Mayday"]}) == [
+    assert texts(song("后来的我们", ["五月天"]), {"五月天": ["Mayday"]}) == [
         "track:后来的我们 artist:Mayday",
         "track:後來的我們 artist:Mayday",
         "track:后来的我们 artist:五月天",
@@ -65,7 +70,7 @@ def test_queries_add_traditional_chinese() -> None:
 
 
 def test_queries_for_mixed_names_use_both_halves() -> None:
-    assert build_queries(song("喜欢你", ["G.E.M.邓紫棋"]), {}) == [
+    assert texts(song("喜欢你", ["G.E.M.邓紫棋"]), {}) == [
         "track:喜欢你 artist:G.E.M.",
         "track:喜歡你 artist:G.E.M.",
         "track:喜欢你 artist:邓紫棋",
@@ -74,8 +79,38 @@ def test_queries_for_mixed_names_use_both_halves() -> None:
     ]
 
 
+def test_queries_for_names_with_brackets_use_each_spelling() -> None:
+    assert texts(song("Insomnia (불면증) (失眠症)", ["辉星 (휘성)"]), {}) == [
+        "track:Insomnia artist:辉星",
+        "track:Insomnia artist:휘성",
+        "Insomnia 辉星",
+        "track:Insomnia",
+    ]
+
+
 def test_queries_without_a_singer() -> None:
-    assert build_queries(song("Rock & Roll [Live]", []), {}) == ["track:Rock & Roll"]
+    assert texts(song("Rock & Roll [Live]", []), {}) == ["track:Rock & Roll"]
+
+
+def test_spotify_linking_a_chinese_name_to_an_english_one_counts() -> None:
+    # From a real run: Spotify lists 李圣杰 as Sam Lee.
+    found = item(1, "你那麼愛她", ["Sam Lee"], "音樂十年李聖傑, 唯一精選", 257)
+    api = FakeApi({"track:你那么爱她 artist:李圣杰": [found]})
+    result = Matcher(api, {}).match(
+        song("你那么爱她", ["李圣杰"], "音乐十年李圣杰, 唯一精选", 257)
+    )
+    assert result.status == "matched"
+    assert result.parts is not None and result.parts.artist_by_search
+
+
+def test_free_text_results_get_no_such_trust() -> None:
+    found = item(1, "你那麼愛她", ["Sam Lee"], "音樂十年李聖傑, 唯一精選", 257)
+    api = FakeApi({"你那么爱她 李圣杰": [found]})
+    result = Matcher(api, {}).match(
+        song("你那么爱她", ["李圣杰"], "音乐十年李圣杰, 唯一精选", 257)
+    )
+    assert result.status == "review"
+    assert result.parts is not None and not result.parts.artist_by_search
 
 
 def test_stops_at_the_first_good_match() -> None:

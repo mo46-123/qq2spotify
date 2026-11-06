@@ -3,6 +3,7 @@
 import json
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
 from typing import Any, Protocol
@@ -48,20 +49,33 @@ def _names_to_search(track: SourceTrack, aliases: Aliases) -> list[str]:
     return list(dict.fromkeys([*spotify_names, *own]))
 
 
-def build_queries(track: SourceTrack, aliases: Aliases) -> list[str]:
+@dataclass(frozen=True)
+class Query:
+    text: str
+    # QQ's own spelling of the singer when it is used in an artist: filter.
+    # Scoring uses it to trust Spotify when it links that name to an English one.
+    artist: str | None = None
+
+
+def build_queries(track: SourceTrack, aliases: Aliases) -> list[Query]:
     """The searches to try, best first: at most 6, without repeats."""
     core = split_title(track.title).core
+    own = search_names(track.artists[0]) if track.artists else []
     names = _names_to_search(track, aliases)
-    queries: list[str] = []
+
+    def with_artist(title: str, name: str) -> Query:
+        return Query(f"track:{title} artist:{name}", name if name in own else None)
+
+    queries: list[Query] = []
     if names:
         first = names[0]
-        queries.append(f"track:{core} artist:{first}")
-        queries.append(f"track:{to_taiwan(core)} artist:{first}")
+        queries.append(with_artist(core, first))
+        queries.append(with_artist(to_taiwan(core), first))
         if len(names) > 1:
-            queries.append(f"track:{core} artist:{names[1]}")
-        queries.append(f"{core} {first}")
-        queries.append(f"track:{to_hongkong(core)} artist:{first}")
-    queries.append(f"track:{core}")
+            queries.append(with_artist(core, names[1]))
+        queries.append(Query(f"{core} {first}"))
+        queries.append(with_artist(to_hongkong(core), first))
+    queries.append(Query(f"track:{core}"))
     return list(dict.fromkeys(queries))[:MAX_SEARCHES]
 
 
@@ -118,10 +132,12 @@ class Matcher:
         searches = 0
         for query in build_queries(track, self.aliases):
             searches += 1
-            for candidate in self.search(query):
-                parts = score_candidate(track, candidate, self.aliases)
+            for candidate in self.search(query.text):
+                parts = score_candidate(
+                    track, candidate, self.aliases, artist_filter=query.artist
+                )
                 if best_parts is None or parts.total > best_parts.total:
-                    best, best_parts, best_query = candidate, parts, query
+                    best, best_parts, best_query = candidate, parts, query.text
             if best_parts is not None and best_parts.total >= MATCHED:
                 break
         return MatchResult(

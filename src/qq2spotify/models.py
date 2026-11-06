@@ -40,6 +40,7 @@ class ScoreParts:
     album: float
     penalty: float
     total: float
+    artist_by_search: bool = False  # Spotify's artist search linked the names
 
 
 @dataclass(frozen=True)

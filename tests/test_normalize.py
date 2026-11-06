@@ -2,7 +2,10 @@ import pytest
 
 from qq2spotify.matching.chinese import to_hongkong, to_simplified, to_taiwan
 from qq2spotify.matching.normalize import (
+    album_tags,
     clean,
+    is_east_asian_name,
+    is_latin_name,
     name_variants,
     search_names,
     split_title,
@@ -47,6 +50,7 @@ def test_clean(text: str, expected: str) -> None:
         ("爱情转移 【DJ版】", "爱情转移", {"dj"}, ()),
         ("Olive (Remix)", "Olive", {"remix"}, ()),
         ("小情歌 (苏打绿版)", "小情歌", set(), ()),
+        ("爱就一个字 - 女声版", "爱就一个字", {"female"}, ()),
         ("(Intro)", "(Intro)", set(), ()),
     ],
 )
@@ -66,6 +70,7 @@ def test_split_title(
         ("Suki刘舒妤", {"suki刘舒妤", "suki", "刘舒妤"}),
         ("周杰倫", {"周杰伦"}),
         ("Jay Chou", {"jaychou"}),
+        ("辉星 (휘성)", {"辉星휘성", "辉星", "휘성"}),
     ],
 )
 def test_name_variants(name: str, variants: set[str]) -> None:
@@ -74,7 +79,41 @@ def test_name_variants(name: str, variants: set[str]) -> None:
 
 @pytest.mark.parametrize(
     ("name", "names"),
-    [("G.E.M.邓紫棋", ["G.E.M.", "邓紫棋"]), ("周杰伦", ["周杰伦"]), ("", [])],
+    [
+        ("G.E.M.邓紫棋", ["G.E.M.", "邓紫棋"]),
+        ("辉星 (휘성)", ["辉星", "휘성"]),
+        ("周杰伦", ["周杰伦"]),
+        ("", []),
+    ],
 )
 def test_search_names(name: str, names: list[str]) -> None:
     assert search_names(name) == names
+
+
+@pytest.mark.parametrize(
+    ("album", "tags"),
+    [
+        ("2004無與倫比演唱會 (Live)", {"live"}),
+        ("我是歌手第三季 (第六期 Live)", {"live"}),
+        ("周杰倫2007世界巡迴演唱會", {"live"}),
+        ("SONYBMG华语音乐快递10", set()),
+        ("Olive Tree", set()),
+        (None, set()),
+    ],
+)
+def test_album_tags(album: str | None, tags: set[str]) -> None:
+    assert album_tags(album) == tags
+
+
+@pytest.mark.parametrize(
+    ("name", "latin", "east_asian"),
+    [
+        ("Sam Lee", True, False),
+        ("李圣杰", False, True),
+        ("휘성", False, True),
+        ("G.E.M.邓紫棋", False, False),
+    ],
+)
+def test_script_checks(name: str, latin: bool, east_asian: bool) -> None:
+    assert is_latin_name(name) is latin
+    assert is_east_asian_name(name) is east_asian
