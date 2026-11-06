@@ -1,6 +1,6 @@
 # QQ Music to Spotify Playlist Transfer: Build Plan
 
-> **Status: planning.** Nothing is built yet. This README is the build plan; it will turn into the user guide as the code lands. Last updated 5 November 2026.
+> **Status: in progress.** M1 (setup) and M2 are done: `qq2spotify inspect <link>` lists a QQ Music playlist's songs. Next is M3, signing in to Spotify. This README is the build plan; it will turn into the user guide as the code lands. Last updated 5 November 2026.
 
 ## Goal and how the tool works
 
@@ -903,8 +903,8 @@ jobs:
 
 Plan on about 8 working days for one developer (a rough estimate), in this order; each milestone ends with something you can run.
 
-- [ ] **M1 Setup (½ day):** Spotify app, allowlist, repo skeleton, `pyproject.toml`, `.gitignore`, and CI running one empty test.
-- [ ] **M2 `inspect` (1 day):** link parsing, QQ fetch, fixtures and tests; prints the songs of a real playlist.
+- [x] **M1 Setup (½ day):** Spotify app, allowlist, repo skeleton, `pyproject.toml`, `.gitignore`, and CI running one empty test.
+- [x] **M2 `inspect` (1 day):** link parsing, QQ fetch, fixtures and tests; prints the songs of a real playlist.
 - [ ] **M3 `login` (1 day):** PKCE, token files, refresh and `GET /me`; both accounts signed in.
 - [ ] **M4 Matching (2 days):** cleaning, search cascade, scoring, aliases and 50 labelled songs; `transfer --dry-run` writes a sensible report.
 - [ ] **M5 `transfer` (1 day):** create or open the playlist, skip duplicates, add in chunks, retry on errors; the first real playlist copied.
