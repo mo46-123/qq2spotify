@@ -1,0 +1,21 @@
+# Secrets and local settings
+.env
+tokens/
+qq_cookie*.txt
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# Tool output
+*.sqlite
+report-*.csv
+
+# OS files
+.DS_Store

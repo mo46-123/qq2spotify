@@ -1,0 +1,47 @@
+[project]
+name = "qq2spotify"
+dynamic = ["version"]
+description = "Copy a QQ Music playlist into a Spotify playlist."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx>=0.27",
+  "typer>=0.12",
+  "rich>=13",
+  "rapidfuzz>=3",
+  "opencc-python-reimplemented>=0.1.7",
+  "platformdirs>=4",
+  "python-dotenv>=1",
+]
+
+[project.optional-dependencies]
+# ruff is kept to one minor series so a new release can't change lint or
+# formatting rules under you; raise it on purpose when you want to upgrade.
+dev = ["pytest>=8", "respx>=0.21", "ruff>=0.16,<0.17"]
+
+[project.scripts]
+qq2spotify = "qq2spotify.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/mo46-123/qq2spotify"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/qq2spotify/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/qq2spotify"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 88
+# The README holds code sketches from the build plan; they are documentation,
+# so the formatter leaves Markdown files alone.
+extend-exclude = ["*.md"]
