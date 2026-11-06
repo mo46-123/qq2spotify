@@ -76,7 +76,15 @@ class SpotifyClient:
                     )
                 self.sleep(wait)
                 continue
-            if response.status_code >= 500 and server_errors < MAX_SERVER_RETRIES:
+            if (
+                response.status_code >= 500
+                and method.upper() == "GET"
+                and server_errors < MAX_SERVER_RETRIES
+            ):
+                # Only reads are sent again. A write that failed like this may
+                # still have gone through, so sending it again could add songs
+                # twice. Running transfer again is the safe retry: it skips the
+                # songs already in the playlist.
                 self.sleep(2**server_errors)
                 server_errors += 1
                 continue

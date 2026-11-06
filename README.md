@@ -622,7 +622,7 @@ Create a private playlist (or open an existing one), skip songs already in it, t
 | 429 with reason `QUOTA_EXCEEDED` | Save progress, stop, and tell the user to run again later |
 | 401 | Refresh the token once, then retry |
 | 403 | The account isn't on the app's allowlist, the owner's Premium lapsed, or the playlist isn't theirs |
-| 500 to 599 | Retry up to 3 times, waiting 1, 2, then 4 seconds |
+| 500 to 599 | Retry a read up to 3 times, waiting 1, 2, then 4 seconds. Never resend a write: it may have gone through, so stop and ask for the command to be run again, which skips the songs already added |
 
 **Code sketch** (`spotify/client.py` and `spotify/playlists.py`)
 
@@ -664,7 +664,8 @@ class SpotifyClient:
                     raise QuotaExceeded("Spotify quota used up. Run again later.")
                 time.sleep(int(response.headers.get("Retry-After", "5")))
                 continue
-            if response.status_code >= 500 and server_errors < 3:
+            # Only reads: a failed write may have gone through anyway.
+            if response.status_code >= 500 and method == "GET" and server_errors < 3:
                 time.sleep(2 ** server_errors)
                 server_errors += 1
                 continue
@@ -725,7 +726,7 @@ qq2spotify logout --account friend
 | `--playlist-name` | QQ name + " (from QQ Music)" | Name for a new playlist |
 | `--to-playlist` | none | Add to this existing playlist instead |
 | `--public` / `--private` | private | Visibility of a new playlist |
-| `--dry-run` | off | Search and write the report, but create and add nothing |
+| `--dry-run` | off | Search, write the report and show what would be added, but create and add nothing |
 | `--min-score` | 0.80 | Lowest score that counts as matched |
 | `--include-review` | off | Also add songs scoring 0.60 to 0.80 |
 | `--report` | `report-<QQ id>.csv` | Where to write the report |
@@ -768,7 +769,7 @@ Unit tests run offline against saved responses, and one manual run with a 10-son
 | `qq/playlist.py` | A saved response; `code` not 0; an empty list; HTML entities; a callback wrapper; repeated `songmid` | Real responses trimmed to about 10 songs in `tests/fixtures/` |
 | `matching/normalize.py` | Traditional vs Simplified, brackets, dash suffixes, `feat.`, full-width text | A table of inputs and expected outputs |
 | `matching/score.py` | Live vs studio, karaoke penalty, length edges at 3 and 15 seconds, alias matches | The 50 hand-labelled songs: assert each one's band |
-| `spotify/client.py` | 429 with `Retry-After` retried; `QUOTA_EXCEEDED` stops; 401 refreshes once; `invalid_grant` asks for a new login | `respx` routes, with `time.sleep` patched out |
+| `spotify/client.py` | 429 with `Retry-After` retried; `QUOTA_EXCEEDED` stops; 401 refreshes once; a write that hit a server error isn't resent; `invalid_grant` asks for a new login | `respx` routes, with `time.sleep` patched out |
 | `spotify/playlists.py` | 250 URIs become 3 requests (100, 100, 50) in order; duplicates skipped | `respx` call history |
 | `cli.py` | `--dry-run` writes a report and sends no POST; exit codes | typer's `CliRunner` plus `respx` |
 

@@ -290,8 +290,11 @@ class MatchRun:
     stopped_by: str | None = None  # why matching stopped early, if it did
 
 
+RERUN_IS_SAFE = " Songs already in the playlist won't be added twice."
+
+
 @contextmanager
-def _friendly_errors() -> Iterator[None]:
+def _friendly_errors(rerun_note: str = "") -> Iterator[None]:
     """Turn the errors people can run into into short messages."""
     try:
         yield
@@ -306,9 +309,17 @@ def _friendly_errors() -> Iterator[None]:
             ) from None
         if status == 404:
             raise _fail("Spotify couldn't find that playlist.") from None
+        if status >= 500:
+            raise _fail(
+                f"Spotify is having trouble right now (HTTP {status}). Wait a few "
+                f"minutes, then run the same command again.{rerun_note}"
+            ) from None
         raise _fail(f"Spotify said no (HTTP {status}).") from None
     except httpx.HTTPError as error:
-        raise _fail(f"Couldn't reach Spotify or QQ Music ({error}).") from None
+        raise _fail(
+            f"Couldn't reach Spotify or QQ Music ({error}). Check your internet "
+            f"connection, then run the same command again.{rerun_note}"
+        ) from None
 
 
 def _read_cookie(path: Path | None) -> str | None:
@@ -388,7 +399,8 @@ def transfer(
         bool, typer.Option(help="Also add songs that scored from 0.60 to 0.80.")
     ] = False,
     dry_run: Annotated[
-        bool, typer.Option(help="Search and save the report; change nothing.")
+        bool,
+        typer.Option(help="Show what would be added, without changing anything."),
     ] = False,
     report: ReportOption = None,
     qq_cookie: CookieOption = None,
@@ -399,7 +411,7 @@ def transfer(
     cookie = _read_cookie(qq_cookie)
     with _friendly_errors():
         target = parse_playlist_ref(to_playlist) if to_playlist else None
-    with _friendly_errors(), make_client() as http:
+    with _friendly_errors(RERUN_IS_SAFE), make_client() as http:
         tokens = AccountTokens(store, account, settings.client_id, http)
         api = SpotifyClient(tokens, http)
         run = _match_songs(http, api, link, cookie)
@@ -414,34 +426,43 @@ def transfer(
             )
         ]
         uris = list(dict.fromkeys(wanted))  # a song listed twice is added once
-        if dry_run:
-            console.print(
-                f"Dry run: {_songs(len(uris))} would be added. "
-                "Nothing changed on Spotify."
-            )
-            return
         if not uris:
             console.print("No songs to add, so no Spotify playlist was changed.")
             return
-        made_now = False
+        # Reading playlists changes nothing, so a dry run does this part too.
         playlist_id = target or find_imported_playlist(
             api, tokens.tokens.spotify_user_id, run.playlist_id
         )
+        already = existing_uris(api, playlist_id) if playlist_id else set()
+        to_add = [uri for uri in uris if uri not in already]
+        skipped = len(uris) - len(to_add)
+        note = f" ({skipped} already there)" if skipped else ""
+        name = playlist_name or f"{run.name} (from QQ Music)"
+        visibility = "public" if public else "private"
+        if dry_run:
+            console.print("Dry run: nothing was changed on Spotify.")
+            if playlist_id is None:
+                console.print(
+                    Text(
+                        f'It would create the {visibility} playlist "{name}" '
+                        f"and add {_songs(len(to_add))}."
+                    )
+                )
+            else:
+                whose = "you chose" if target else "an earlier run made"
+                console.print(
+                    f"It would add {_songs(len(to_add))}{note} to the playlist {whose}."
+                )
+                console.print(f"Open it in Spotify: {playlist_url(playlist_id)}")
+            return
         if playlist_id is None:
-            name = playlist_name or f"{run.name} (from QQ Music)"
             playlist_id = create_playlist(api, name, run.playlist_id, public=public)
-            made_now = True
-            visibility = "public" if public else "private"
             console.print(Text(f'Created the {visibility} playlist "{name}".'))
         elif not target:
             console.print(
                 "Found the playlist an earlier run made; adding what's missing."
             )
-        already = set() if made_now else existing_uris(api, playlist_id)
-        to_add = [uri for uri in uris if uri not in already]
         add_in_order(api, playlist_id, to_add)
-    skipped = len(uris) - len(to_add)
-    note = f" ({skipped} already there)" if skipped else ""
     console.print(f"Added {_songs(len(to_add))}{note}.")
     console.print(f"Open it in Spotify: {playlist_url(playlist_id)}")
 

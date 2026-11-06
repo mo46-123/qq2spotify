@@ -89,6 +89,36 @@ def test_fourth_server_error_is_an_error() -> None:
         call(*[httpx.Response(503) for _ in range(4)])
 
 
+def send_a_write(*responses: httpx.Response) -> tuple[respx.Route, list[float]]:
+    """Add a song while Spotify answers with ``responses`` in turn."""
+    waits: list[float] = []
+    with respx.mock:
+        route = respx.post(f"{API_URL}/playlists/p1/items").mock(
+            side_effect=list(responses)
+        )
+        with httpx.Client() as http:
+            SpotifyClient(FakeTokens(), http, sleep=waits.append).post(
+                "/playlists/p1/items", json={"uris": ["spotify:track:1"]}
+            )
+    return route, waits
+
+
+def test_a_write_that_hit_a_server_error_is_not_sent_again() -> None:
+    # It may have gone through anyway; sending it again could add songs twice.
+    with pytest.raises(httpx.HTTPStatusError):
+        send_a_write(httpx.Response(502), httpx.Response(201, json={}))
+
+
+def test_a_write_is_sent_again_after_a_429() -> None:
+    # Spotify turned it away without doing it, so sending it again is safe.
+    route, waits = send_a_write(
+        httpx.Response(429, headers={"Retry-After": "3"}),
+        httpx.Response(201, json={"snapshot_id": "s"}),
+    )
+    assert route.call_count == 2
+    assert waits == [3]
+
+
 def test_full_urls_are_used_as_they_are() -> None:
     next_page = f"{API_URL}/playlists/p1/items?offset=50&limit=50"
     with respx.mock:

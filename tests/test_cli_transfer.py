@@ -168,12 +168,76 @@ def test_adds_to_an_existing_playlist_given_by_link() -> None:
 
 
 def test_dry_run_changes_nothing(tmp_path: Path) -> None:
-    with respx.mock:  # no playlist routes: any change would fail the test
+    with respx.mock:  # no POST routes: any change would fail the test
         mock_qq_and_search()
+        respx.get(f"{API}/me/playlists").mock(
+            return_value=httpx.Response(200, json={"items": [], "next": None})
+        )
         result = runner.invoke(cli.app, ["transfer", LINK, "-a", "me", "--dry-run"])
     assert result.exit_code == 0, result.output
-    assert "Dry run: 2 songs would be added." in result.output
+    assert "Dry run: nothing was changed on Spotify." in result.output
+    assert (
+        'It would create the private playlist "夜跑 & 晨练 (from QQ Music)" '
+        "and add 2 songs." in result.output
+    )
     assert (tmp_path / "report-7891234567.csv").exists()
+
+
+def test_dry_run_leaves_out_songs_already_in_the_playlist() -> None:
+    mine = {"id": OLD_ID, "owner": {"id": "user1"}, "description": MARKER}
+    with respx.mock:  # no POST routes: any change would fail the test
+        mock_qq_and_search()
+        respx.get(f"{API}/me/playlists").mock(
+            return_value=httpx.Response(200, json={"items": [mine], "next": None})
+        )
+        respx.get(f"{API}/playlists/{OLD_ID}/items").mock(
+            return_value=httpx.Response(
+                200,
+                json={"items": [{"item": {"uri": "spotify:track:1"}}], "next": None},
+            )
+        )
+        result = runner.invoke(cli.app, ["transfer", LINK, "-a", "me", "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert (
+        "It would add 1 song (1 already there) to the playlist an earlier run made."
+        in result.output
+    )
+    assert f"https://open.spotify.com/playlist/{OLD_ID}" in result.output
+
+
+def test_dry_run_into_a_chosen_playlist() -> None:
+    target = "37i9dQZF1DXcBWIGoYBM5M"
+    with respx.mock:  # no POST routes: any change would fail the test
+        mock_qq_and_search()
+        respx.get(f"{API}/playlists/{target}/items").mock(
+            return_value=httpx.Response(200, json={"items": [], "next": None})
+        )
+        result = runner.invoke(
+            cli.app,
+            ["transfer", LINK, "-a", "me", "--to-playlist", target, "--dry-run"],
+        )
+    assert result.exit_code == 0, result.output
+    assert "It would add 2 songs to the playlist you chose." in result.output
+
+
+def test_a_failed_add_is_not_sent_again() -> None:
+    with respx.mock:
+        mock_qq_and_search()
+        respx.get(f"{API}/me/playlists").mock(
+            return_value=httpx.Response(200, json={"items": [], "next": None})
+        )
+        respx.post(f"{API}/me/playlists").mock(
+            return_value=httpx.Response(201, json={"id": NEW_ID})
+        )
+        add = respx.post(f"{API}/playlists/{NEW_ID}/items").mock(
+            return_value=httpx.Response(502)
+        )
+        result = runner.invoke(cli.app, ["transfer", LINK, "-a", "me"])
+    assert result.exit_code == 1
+    assert add.call_count == 1  # it may have gone through, so it isn't resent
+    assert "HTTP 502" in result.output
+    assert "run the same command again" in result.output
+    assert "won't be added twice" in result.output
 
 
 def test_include_review_adds_songs_to_check_too() -> None:
