@@ -9,6 +9,11 @@ SHARE_PAGE = (
     f"https://i.y.qq.com/n2/m/share/details/taoge.html?id={PLAYLIST_ID}&ADTAG=wxfshare"
 )
 SHORT_LINK = "https://c6.y.qq.com/base/fcgi-bin/u?__=AbC123"
+# The format the QQ Music app's share button produced in November 2026.
+APP_SHARE_LINK = (
+    f"https://y.qq.com/n/ryqq_v2/playlist/{PLAYLIST_ID}"
+    "?ADTAG=h5_share_playlist&redirecttag=mn.redirect.custom&mnst=0.91"
+)
 
 
 @pytest.mark.parametrize(
@@ -18,6 +23,7 @@ SHORT_LINK = "https://c6.y.qq.com/base/fcgi-bin/u?__=AbC123"
         f"  {PLAYLIST_ID}\n",
         f"https://y.qq.com/n/ryqq/playlist/{PLAYLIST_ID}",
         f"https://y.qq.com/n/yqq/playlist/{PLAYLIST_ID}.html",
+        APP_SHARE_LINK,
         SHARE_PAGE,
         f"分享歌单《夜跑》{SHARE_PAGE} @QQ音乐",
         f"看看这个：https://y.qq.com/n/ryqq/playlist/{PLAYLIST_ID}，好听",
