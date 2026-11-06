@@ -108,10 +108,7 @@ def test_match_saves_what_it_found_when_the_quota_runs_out(tmp_path: Path) -> No
 
 
 def test_match_needs_a_login() -> None:
-    with respx.mock:
-        respx.get(ENDPOINTS[0]).mock(
-            return_value=httpx.Response(200, text=FIXTURE.read_text(encoding="utf-8"))
-        )
+    with respx.mock:  # the login is checked before anything is downloaded
         result = runner.invoke(cli.app, ["match", LINK, "--account", "friend"])
     assert result.exit_code == 1
     assert "No saved login named 'friend'" in result.output

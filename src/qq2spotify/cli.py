@@ -3,6 +3,9 @@
 import json
 import time
 import webbrowser
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated
 
@@ -34,6 +37,15 @@ from qq2spotify.spotify.auth import (
     wait_for_callback,
 )
 from qq2spotify.spotify.client import QuotaExceeded, SpotifyClient
+from qq2spotify.spotify.playlists import (
+    PlaylistError,
+    add_in_order,
+    create_playlist,
+    existing_uris,
+    find_imported_playlist,
+    parse_playlist_ref,
+    playlist_url,
+)
 
 app = typer.Typer(no_args_is_help=True)
 console = Console()
@@ -256,66 +268,186 @@ def logout(account: AccountOption = "default") -> None:
         console.print(f"There's no saved login named {escape(account)}.")
 
 
-@app.command("match")
-def match_playlist(
-    link: Annotated[
-        str, typer.Argument(help="QQ Music playlist link, share text or playlist ID.")
-    ],
-    account: AccountOption = "default",
-    report: Annotated[
-        Path | None,
-        typer.Option(
-            help="Where to save the report. Default: report-<playlist ID>.csv"
-        ),
-    ] = None,
-    qq_cookie: Annotated[
-        Path | None,
-        typer.Option(
-            help="File holding your y.qq.com cookie, for login-only playlists."
-        ),
-    ] = None,
-) -> None:
-    """Find each QQ Music song on Spotify and save a report. Changes nothing on Spotify."""
-    store = _store(account)
-    settings = _settings()
-    cookie = qq_cookie.read_text(encoding="utf-8").strip() if qq_cookie else None
-    aliases = load_aliases(data_dir() / "aliases.json")
-    playlist_id, name, tracks = "", "", []
-    results: list[MatchResult] = []
-    stopped_by: str | None = None
+LinkArgument = Annotated[
+    str, typer.Argument(help="QQ Music playlist link, share text or playlist ID.")
+]
+ReportOption = Annotated[
+    Path | None,
+    typer.Option(help="Where to save the report. Default: report-<playlist ID>.csv"),
+]
+CookieOption = Annotated[
+    Path | None,
+    typer.Option(help="File holding your y.qq.com cookie, for login-only playlists."),
+]
+
+
+@dataclass
+class MatchRun:
+    playlist_id: str
+    name: str
+    tracks: list[SourceTrack]
+    results: list[MatchResult] = field(default_factory=list)
+    stopped_by: str | None = None  # why matching stopped early, if it did
+
+
+@contextmanager
+def _friendly_errors() -> Iterator[None]:
+    """Turn the errors people can run into into short messages."""
     try:
-        with make_client() as http:
-            playlist_id = extract_playlist_id(link, http)
-            name, tracks = fetch_playlist(playlist_id, http, cookie=cookie)
-            tokens = AccountTokens(store, account, settings.client_id, http)
-            matcher = Matcher(SpotifyClient(tokens, http), aliases, pause=SEARCH_PAUSE)
-            for song in with_progress(
-                tracks, description="Searching Spotify", console=console, transient=True
-            ):
-                results.append(matcher.match(song))
-    except (LinkError, QQError, NeedsLogin) as error:
+        yield
+    except (LinkError, QQError, NeedsLogin, QuotaExceeded, PlaylistError) as error:
         raise _fail(str(error)) from None
-    except QuotaExceeded as error:
-        stopped_by = str(error)  # still save what was found so far
     except httpx.HTTPStatusError as error:
-        if error.response.status_code == 403:
-            raise _fail(NOT_ALLOWED) from None
-        raise _fail(f"Spotify said no (HTTP {error.response.status_code}).") from None
+        status = error.response.status_code
+        if status == 403:
+            raise _fail(
+                f"{NOT_ALLOWED} When adding to an existing playlist, it must belong "
+                "to this account or be shared with it as a collaborator."
+            ) from None
+        if status == 404:
+            raise _fail("Spotify couldn't find that playlist.") from None
+        raise _fail(f"Spotify said no (HTTP {status}).") from None
     except httpx.HTTPError as error:
         raise _fail(f"Couldn't reach Spotify or QQ Music ({error}).") from None
 
-    report_path = report or Path(f"report-{playlist_id}.csv")
-    write_report(report_path, results)
-    counts = count_statuses(results)
-    console.print(Text(f"{name}: checked {len(results)} of {len(tracks)} songs."))
+
+def _read_cookie(path: Path | None) -> str | None:
+    return path.read_text(encoding="utf-8").strip() if path else None
+
+
+def _match_songs(
+    http: httpx.Client, api: SpotifyClient, link: str, cookie: str | None
+) -> MatchRun:
+    playlist_id = extract_playlist_id(link, http)
+    name, tracks = fetch_playlist(playlist_id, http, cookie=cookie)
+    aliases = load_aliases(data_dir() / "aliases.json")
+    matcher = Matcher(api, aliases, pause=SEARCH_PAUSE)
+    run = MatchRun(playlist_id, name, tracks)
+    try:
+        for song in with_progress(
+            tracks, description="Searching Spotify", console=console, transient=True
+        ):
+            run.results.append(matcher.match(song))
+    except QuotaExceeded as error:
+        run.stopped_by = str(error)  # keep what was found so far
+    return run
+
+
+def _save_report(run: MatchRun, report: Path | None) -> None:
+    report_path = report or Path(f"report-{run.playlist_id}.csv")
+    write_report(report_path, run.results)
+    counts = count_statuses(run.results)
+    console.print(
+        Text(f"{run.name}: checked {len(run.results)} of {len(run.tracks)} songs.")
+    )
     console.print(
         f"Matched {counts['matched']} · Review {counts['review']} · "
         f"Not found {counts['not_found']}"
     )
-    _print_songs_to_check(results)
+    _print_songs_to_check(run.results)
     console.print(f"Report saved to {escape(str(report_path))}")
-    if stopped_by:
-        raise _fail(f"{stopped_by} The report has the songs checked so far.")
+    if run.stopped_by:
+        raise _fail(f"{run.stopped_by} The report has the songs checked so far.")
+
+
+@app.command("match")
+def match_playlist(
+    link: LinkArgument,
+    account: AccountOption = "default",
+    report: ReportOption = None,
+    qq_cookie: CookieOption = None,
+) -> None:
+    """Find each QQ Music song on Spotify and save a report. Changes nothing on Spotify."""
+    store = _store(account)
+    settings = _settings()
+    cookie = _read_cookie(qq_cookie)
+    with _friendly_errors(), make_client() as http:
+        tokens = AccountTokens(store, account, settings.client_id, http)
+        run = _match_songs(http, SpotifyClient(tokens, http), link, cookie)
+    _save_report(run, report)
+
+
+@app.command()
+def transfer(
+    link: LinkArgument,
+    account: AccountOption = "default",
+    playlist_name: Annotated[
+        str | None,
+        typer.Option(
+            help='Name for a new playlist. Default: the QQ name + "(from QQ Music)".'
+        ),
+    ] = None,
+    to_playlist: Annotated[
+        str | None,
+        typer.Option(help="Add to this existing Spotify playlist (link or ID)."),
+    ] = None,
+    public: Annotated[
+        bool, typer.Option("--public/--private", help="Who can see a new playlist.")
+    ] = False,
+    include_review: Annotated[
+        bool, typer.Option(help="Also add songs that scored from 0.60 to 0.80.")
+    ] = False,
+    dry_run: Annotated[
+        bool, typer.Option(help="Search and save the report; change nothing.")
+    ] = False,
+    report: ReportOption = None,
+    qq_cookie: CookieOption = None,
+) -> None:
+    """Copy a QQ Music playlist into a Spotify playlist."""
+    store = _store(account)
+    settings = _settings()
+    cookie = _read_cookie(qq_cookie)
+    with _friendly_errors():
+        target = parse_playlist_ref(to_playlist) if to_playlist else None
+    with _friendly_errors(), make_client() as http:
+        tokens = AccountTokens(store, account, settings.client_id, http)
+        api = SpotifyClient(tokens, http)
+        run = _match_songs(http, api, link, cookie)
+        _save_report(run, report)
+        wanted = [
+            result.best.uri
+            for result in run.results
+            if result.best
+            and (
+                result.status == "matched"
+                or (include_review and result.status == "review")
+            )
+        ]
+        uris = list(dict.fromkeys(wanted))  # a song listed twice is added once
+        if dry_run:
+            console.print(
+                f"Dry run: {_songs(len(uris))} would be added. "
+                "Nothing changed on Spotify."
+            )
+            return
+        if not uris:
+            console.print("No songs to add, so no Spotify playlist was changed.")
+            return
+        made_now = False
+        playlist_id = target or find_imported_playlist(
+            api, tokens.tokens.spotify_user_id, run.playlist_id
+        )
+        if playlist_id is None:
+            name = playlist_name or f"{run.name} (from QQ Music)"
+            playlist_id = create_playlist(api, name, run.playlist_id, public=public)
+            made_now = True
+            visibility = "public" if public else "private"
+            console.print(Text(f'Created the {visibility} playlist "{name}".'))
+        elif not target:
+            console.print(
+                "Found the playlist an earlier run made; adding what's missing."
+            )
+        already = set() if made_now else existing_uris(api, playlist_id)
+        to_add = [uri for uri in uris if uri not in already]
+        add_in_order(api, playlist_id, to_add)
+    skipped = len(uris) - len(to_add)
+    note = f" ({skipped} already there)" if skipped else ""
+    console.print(f"Added {_songs(len(to_add))}{note}.")
+    console.print(f"Open it in Spotify: {playlist_url(playlist_id)}")
+
+
+def _songs(count: int) -> str:
+    return "1 song" if count == 1 else f"{count} songs"
 
 
 def _describe(track: SourceTrack) -> Text:
