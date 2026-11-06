@@ -1,0 +1,48 @@
+{
+  "code": 0,
+  "subcode": 0,
+  "cdlist": [
+    {
+      "disstid": "7891234567",
+      "dissname": "夜跑 &amp; 晨练",
+      "songnum": 5,
+      "songlist": [
+        {
+          "songmid": "000AAA111",
+          "songname": "晴天",
+          "singer": [{"mid": "s001", "name": "周杰伦"}],
+          "albumname": "叶惠美",
+          "interval": 269
+        },
+        {
+          "songmid": "000BBB222",
+          "songname": "说好不哭（with 五月天阿信）",
+          "singer": [
+            {"mid": "s001", "name": "周杰伦"},
+            {"mid": "s002", "name": "阿信"}
+          ],
+          "albumname": "说好不哭",
+          "interval": 222
+        },
+        {
+          "songmid": "000AAA111",
+          "songname": "晴天",
+          "singer": [{"mid": "s001", "name": "周杰伦"}],
+          "albumname": "叶惠美",
+          "interval": 269
+        },
+        {
+          "songmid": "",
+          "songname": "没有 ID 的歌"
+        },
+        {
+          "songmid": "000CCC333",
+          "songname": "Rock &amp; Roll [Live]",
+          "singer": [],
+          "albumname": "",
+          "interval": null
+        }
+      ]
+    }
+  ]
+}
