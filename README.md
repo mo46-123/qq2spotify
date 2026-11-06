@@ -1,6 +1,6 @@
 # QQ Music to Spotify Playlist Transfer: Build Plan
 
-> **Status: in progress.** M1 to M4 are done: `qq2spotify inspect <link>` lists a QQ Music playlist's songs, `qq2spotify login` saves a Spotify login, and `qq2spotify match <link>` finds each song on Spotify and saves a report (108 of 109 found on a real playlist). Next is M5, creating the Spotify playlist. This README is the build plan; it will turn into the user guide as the code lands. Last updated 6 November 2026.
+> **Status: in progress.** M1 to M5 are done: `qq2spotify inspect <link>` lists a QQ Music playlist's songs, `qq2spotify login` saves a Spotify login, `qq2spotify match <link>` finds each song on Spotify and saves a report, and `qq2spotify transfer <link>` copies the matches into a private Spotify playlist in QQ order. On a real 109-song playlist it added 106 songs (108 matched, 2 were listed twice), and a second run added none. Next is M6, polish: progress, summary, cache, resume and exit codes. This README is the build plan; it will turn into the user guide as the code lands. Last updated 6 November 2026.
 
 ## Goal and how the tool works
 
@@ -622,7 +622,7 @@ Create a private playlist (or open an existing one), skip songs already in it, t
 | 429 with reason `QUOTA_EXCEEDED` | Save progress, stop, and tell the user to run again later |
 | 401 | Refresh the token once, then retry |
 | 403 | The account isn't on the app's allowlist, the owner's Premium lapsed, or the playlist isn't theirs |
-| 500 to 599 | Retry up to 3 times, waiting 1, 2, then 4 seconds |
+| 500 to 599 | Retry a read up to 3 times, waiting 1, 2, then 4 seconds. Never resend a write: it may have gone through, so stop and ask for the command to be run again, which skips the songs already added |
 
 **Code sketch** (`spotify/client.py` and `spotify/playlists.py`)
 
@@ -664,7 +664,8 @@ class SpotifyClient:
                     raise QuotaExceeded("Spotify quota used up. Run again later.")
                 time.sleep(int(response.headers.get("Retry-After", "5")))
                 continue
-            if response.status_code >= 500 and server_errors < 3:
+            # Only reads: a failed write may have gone through anyway.
+            if response.status_code >= 500 and method == "GET" and server_errors < 3:
                 time.sleep(2 ** server_errors)
                 server_errors += 1
                 continue
@@ -725,7 +726,7 @@ qq2spotify logout --account friend
 | `--playlist-name` | QQ name + " (from QQ Music)" | Name for a new playlist |
 | `--to-playlist` | none | Add to this existing playlist instead |
 | `--public` / `--private` | private | Visibility of a new playlist |
-| `--dry-run` | off | Search and write the report, but create and add nothing |
+| `--dry-run` | off | Search, write the report and show what would be added, but create and add nothing |
 | `--min-score` | 0.80 | Lowest score that counts as matched |
 | `--include-review` | off | Also add songs scoring 0.60 to 0.80 |
 | `--report` | `report-<QQ id>.csv` | Where to write the report |
@@ -768,7 +769,7 @@ Unit tests run offline against saved responses, and one manual run with a 10-son
 | `qq/playlist.py` | A saved response; `code` not 0; an empty list; HTML entities; a callback wrapper; repeated `songmid` | Real responses trimmed to about 10 songs in `tests/fixtures/` |
 | `matching/normalize.py` | Traditional vs Simplified, brackets, dash suffixes, `feat.`, full-width text | A table of inputs and expected outputs |
 | `matching/score.py` | Live vs studio, karaoke penalty, length edges at 3 and 15 seconds, alias matches | The 50 hand-labelled songs: assert each one's band |
-| `spotify/client.py` | 429 with `Retry-After` retried; `QUOTA_EXCEEDED` stops; 401 refreshes once; `invalid_grant` asks for a new login | `respx` routes, with `time.sleep` patched out |
+| `spotify/client.py` | 429 with `Retry-After` retried; `QUOTA_EXCEEDED` stops; 401 refreshes once; a write that hit a server error isn't resent; `invalid_grant` asks for a new login | `respx` routes, with `time.sleep` patched out |
 | `spotify/playlists.py` | 250 URIs become 3 requests (100, 100, 50) in order; duplicates skipped | `respx` call history |
 | `cli.py` | `--dry-run` writes a report and sends no POST; exit codes | typer's `CliRunner` plus `respx` |
 
@@ -907,7 +908,7 @@ Plan on about 8 working days for one developer (a rough estimate), in this order
 - [x] **M2 `inspect` (1 day):** link parsing, QQ fetch, fixtures and tests; prints the songs of a real playlist.
 - [x] **M3 `login` (1 day):** PKCE, token files, refresh and `GET /me`; both accounts signed in.
 - [x] **M4 Matching (2 days):** cleaning, search cascade, scoring and aliases, tuned on a real 109-song playlist; the `qq2spotify match` command writes the report (108 matched, 1 rightly held back).
-- [ ] **M5 `transfer` (1 day):** create or open the playlist, skip duplicates, add in chunks, retry on errors; the first real playlist copied.
+- [x] **M5 `transfer` (1 day):** create or open the playlist, skip duplicates, add in chunks, retry on errors; the first real playlist copied (106 songs, and a second run added none).
 - [ ] **M6 Polish (1 day):** progress bar, summary, cache, resume, exit codes and `--verbose`.
 - [ ] **M7 Tests (1 day):** fill in the testing table above, then do the manual end-to-end run.
 - [ ] **M8 Release (½ day):** user-facing README, LICENSE, CHANGELOG and the `v0.1.0` tag.
